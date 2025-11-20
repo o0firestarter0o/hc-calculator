@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Calculadora de Hidratos — Pro</title>
+<style>
+/* Estilos base */
+:root{
+  --bg: #0f0f0f;
+  --card: #171717;
+  --muted: #aaa;
+  --accent: #0a84ff;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family: Arial, sans-serif;
+  background:var(--bg);
+  color:#eee;
+  display:flex;
+  justify-content:center;
+  padding:20px;
+  min-height:100vh;
+  align-items:flex-start;
+}
+.contenedor{
+  width:100%;
+  max-width:520px;
+  background:var(--card);
+  padding:28px;
+  border-radius:18px;
+  box-shadow:0 8px 30px rgba(0,0,0,.6);
+}
+h2{text-align:center;margin:0 0 18px}
+label{display:block;margin-bottom:6px;color:var(--muted);font-size:13px}
+
+/* Inputs */
+input, textarea, select, button {
+  font-size:15px;
+  font-family:inherit;
+}
+input, textarea, select{
+  width:100%;
+  padding:12px 14px;
+  margin-bottom:12px;
+  background:#222;
+  border-radius:12px;
+  border:1px solid #333;
+  color:#eee;
+}
+textarea{min-height:110px;resize:vertical}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);}
+
+/* Botones principales */
+.botones{display:flex;gap:10px;margin-bottom:14px}
+
+/* Estilo unificado para TODOS los botones */
+button{
+  padding:12px;
+  border-radius:12px;
+  border:none;
+  color:#fff;
+  cursor:pointer;
+  background:linear-gradient(145deg,var(--accent),#005fcc);
+  box-shadow:0 6px 16px rgba(0,0,0,.45);
+  font-weight:700;
+}
+button:hover{filter:brightness(1.06)}
+button:active{transform:scale(.98)}
+
+/* Botones pequeños (recientes) */
+#recientes button{
+  padding:6px 10px;
+  background:#333;
+  border-radius:10px;
+}
+#recientes button:hover{background:var(--accent)}
+
+/* Recientes */
+#recientes{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-bottom:12px;
+}
+
+/* Resultado */
+#resultado{
+  white-space:pre-wrap;
+  background:#1b1b1b;
+  padding:16px;
+  border-radius:12px;
+  border:1px solid #333;
+  min-height:120px;
+  margin-bottom:12px;
+  color:#e6e6e6;
+  font-family:monospace;
+  font-size:14px;
+}
+
+/* Spinner overlay */
+#spinnerOverlay{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);
+  justify-content:center;align-items:center;z-index:9999;
+}
+.spinner{
+  width:84px;height:84px;border-radius:50%;
+  border:7px solid rgba(255,255,255,.22);border-top:7px solid var(--accent);
+  animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Vista porciones */
+#vistaPorciones{display:none;margin-top:6px}
+.grupo{display:flex;gap:10px}
+.grupo input{flex:1}
+small{color:var(--muted);display:block;margin-bottom:8px;font-size:13px}
+
+</style>
+</head>
+<body>
+
+<div class="contenedor">
+  <h2>Calculadora de Hidratos — Pro</h2>
+
+  <label for="apiKey">API Key (OpenAI)</label>
+  <div style="display:flex;gap:10px;margin-bottom:8px">
+    <input id="apiKey" type="password" readonly placeholder="Introduce tu API Key..." />
+    <button id="btnCambiar" style="width:110px">Cambiar</button>
+  </div>
+
+  <label for="alimento">¿Qué vas a comer?</label>
+  <textarea id="alimento" placeholder="Ej: bocadillo de tortilla, vaso de leche, croissant de chocolate..."></textarea>
+
+  <div id="recientes"></div>
+
+  <div class="botones">
+    <button id="btnCalcular">Calcular</button>
+    <button id="btnCopiar">Copiar resultado</button>
+    <button id="btnPorciones">Porciones</button>
+  </div>
+
+  <div id="vistaIA">
+    <small>La IA devuelve solo los HC por ingrediente; el TOTAL se calcula en tu navegador.</small>
+    <div id="resultado">Aquí aparecerá el desglose…</div>
+  </div>
+
+  <div id="vistaPorciones">
+    <label><strong>Calculadora de porciones (Regla de 3)</strong></label>
+
+    <label for="tipoUnidad">Unidad base</label>
+    <select id="tipoUnidad">
+      <option value="gramos">Por 100 g</option>
+      <option value="ml">Por 100 ml</option>
+      <option value="unidad">Por 1 unidad</option>
+    </select>
+
+    <label for="hcRef">HC que contiene la unidad base (ej. 12)</label>
+    <input id="hcRef" type="number" step="any" placeholder="HC en la unidad base" />
+
+    <div class="grupo">
+      <input id="pesoIng" type="number" step="any" placeholder="Cantidad ingerida" />
+      <select id="unidadIng" style="width:120px">
+        <option value="g">g</option>
+        <option value="ml">ml</option>
+        <option value="u">unidades</option>
+      </select>
+    </div>
+
+    <input id="hcIng" type="number" placeholder="HC resultante" readonly />
+    <button id="btnCalcularPorciones">Calcular</button>
+  </div>
+</div>
+
+<div id="spinnerOverlay">
+  <div class="spinner"></div>
+</div>
+
+<script>
+const MODEL = "gpt-4o-mini";
+
+/* Elementos */
+const apiInput = document.getElementById("apiKey");
+const btnCambiar = document.getElementById("btnCambiar");
+const alimentoEl = document.getElementById("alimento");
+const btnCalcular = document.getElementById("btnCalcular");
+const btnCopiar = document.getElementById("btnCopiar");
+const btnPorciones = document.getElementById("btnPorciones");
+const resultadoEl = document.getElementById("resultado");
+const spinnerOverlay = document.getElementById("spinnerOverlay");
+
+const vistaIA = document.getElementById("vistaIA");
+const vistaPorciones = document.getElementById("vistaPorciones");
+
+const tipoUnidad = document.getElementById("tipoUnidad");
+const hcRef = document.getElementById("hcRef");
+const pesoIng = document.getElementById("pesoIng");
+const unidadIng = document.getElementById("unidadIng");
+const hcIng = document.getElementById("hcIng");
+const btnCalcularPorciones = document.getElementById("btnCalcularPorciones");
+
+/* Inicializar API key */
+const savedKey = localStorage.getItem("openai_api_key");
+if (savedKey) apiInput.value = savedKey;
+
+/* Cambiar/guardar API */
+btnCambiar.addEventListener("click", () => {
+  if (apiInput.hasAttribute("readonly")) {
+    apiInput.removeAttribute("readonly");
+    apiInput.style.background = "#ddd";
+    apiInput.style.color = "#000";
+    btnCambiar.textContent = "Guardar";
+    apiInput.focus();
+  } else {
+    localStorage.setItem("openai_api_key", apiInput.value.trim());
+    apiInput.setAttribute("readonly", true);
+    apiInput.style.background = "#222";
+    apiInput.style.color = "#eee";
+    btnCambiar.textContent = "Cambiar";
+  }
+});
+
+/* Recientes */
+let recientes = JSON.parse(localStorage.getItem("recientes") || "[]");
+const recientesDiv = document.getElementById("recientes");
+
+function actualizarRecientes(){
+  recientesDiv.innerHTML = "";
+  recientes.slice(-6).reverse().forEach(item => {
+    const b = document.createElement("button");
+    b.textContent = item;
+    b.onclick = () => alimentoEl.value = item;
+    recientesDiv.appendChild(b);
+  });
+}
+actualizarRecientes();
+
+/* Spinner */
+function mostrarSpinner(){ spinnerOverlay.style.display = "flex"; }
+function ocultarSpinner(){ spinnerOverlay.style.display = "none"; }
+
+/* Prompt IA */
+function construirPrompt(texto){
+  return `
+Eres un experto en nutrición. Devuélveme exclusivamente un listado con los gramos de HIDRATOS DE CARBONO (HC) por ingrediente.
+Formato por línea EXACTO:
+ingrediente → X g HC
+
+No incluyas total.
+Alimento: ${texto}
+`.trim();
+}
+
+/* Extraer texto IA */
+function extraerTexto(data){
+  try{
+    if (!data) return "";
+    if (typeof data.output_text === "string") return data.output_text.trim();
+
+    if (Array.isArray(data.output)){
+      const partes = [];
+      for (const out of data.output){
+        if (Array.isArray(out.content)){
+          for (const block of out.content){
+            if (block.type === "output_text") partes.push(block.text);
+          }
+        }
+      }
+      return partes.join("\n").trim();
+    }
+
+    return data.choices?.[0]?.message?.content || "";
+  }catch(e){
+    return "";
+  }
+}
+
+/* Parseo + suma */
+function parsearYSumar(texto){
+  const lines = texto.split("\n").map(l => l.trim()).filter(Boolean);
+  let total = 0;
+  const out = [];
+
+  for (const line of lines){
+    const m = line.match(/^(.+?)\s*[→:-]\s*(\d+(?:[.,]\d+)?)/);
+    if (m){
+      const nombre = m[1].trim();
+      const num = parseFloat(m[2].replace(",", "."));
+      total += num;
+      out.push(`${nombre} → ${num} g HC`);
+    }
+  }
+  return { out, total };
+}
+
+/* Petición IA */
+async function pedirIA(promptText){
+  const key = apiInput.value.trim();
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "Authorization":"Bearer "+key
+    },
+    body:JSON.stringify({ model:MODEL, input:promptText })
+  });
+  return res.json();
+}
+
+/* Calcular con IA */
+btnCalcular.addEventListener("click", async ()=>{
+  const texto = alimentoEl.value.trim();
+  const key = apiInput.value.trim();
+
+  if (!texto){ resultadoEl.textContent="Escribe el alimento."; return; }
+  if (!key){ resultadoEl.textContent="Introduce la API Key."; return; }
+
+  mostrarSpinner();
+  resultadoEl.textContent = "Calculando…";
+
+  try{
+    const resp = await pedirIA(construirPrompt(texto));
+    const textoIA = extraerTexto(resp);
+
+    const { out, total } = parsearYSumar(textoIA);
+    resultadoEl.textContent = out.join("\n") + `\n\nTOTAL → ${total.toFixed(2)} g HC`;
+
+    if (!recientes.includes(texto)){
+      recientes.push(texto);
+      if (recientes.length > 10) recientes.shift();
+      localStorage.setItem("recientes", JSON.stringify(recientes));
+      actualizarRecientes();
+    }
+  }finally{
+    ocultarSpinner();
+  }
+});
+
+/* Copiar */
+btnCopiar.addEventListener("click", async ()=>{
+  await navigator.clipboard.writeText(resultadoEl.textContent);
+  alert("Copiado.");
+});
+
+/* Vista porciones */
+let isPorciones = false;
+
+function mostrarVistaPorciones(show){
+  isPorciones = show;
+
+  // Ocultar botones principales
+  btnCalcular.style.display = show ? "none" : "block";
+  btnCopiar.style.display = show ? "none" : "block";
+  btnCambiar.style.display = show ? "none" : "block";
+
+  if (show){
+    vistaIA.style.display = "none";
+    vistaPorciones.style.display = "block";
+    btnPorciones.textContent = "Volver";
+  } else {
+    vistaIA.style.display = "block";
+    vistaPorciones.style.display = "none";
+    btnPorciones.textContent = "Porciones";
+  }
+}
+
+btnPorciones.addEventListener("click", ()=> mostrarVistaPorciones(!isPorciones));
+
+/* Cálculo de porciones */
+btnCalcularPorciones.addEventListener("click", ()=>{
+  const tipo = tipoUnidad.value;
+  const hcBase = parseFloat(hcRef.value);
+  const cantidadIngresada = parseFloat(pesoIng.value);
+  const unidadSeleccionada = unidadIng.value;
+
+  if (!hcBase || !cantidadIngresada){
+    alert("Introduce todos los valores.");
+    return;
+  }
+
+  let factor = 1;
+
+  if (tipo === "gramos" || tipo === "ml"){
+    factor = cantidadIngresada / 100;
+  }
+  else if (tipo === "unidad"){
+    if (unidadSeleccionada !== "u"){
+      alert("Si la referencia es por unidad, debes usar unidades.");
+      return;
+    }
+    factor = cantidadIngresada;
+  }
+
+  hcIng.value = (hcBase * factor).toFixed(2);
+});
+</script>
+</body>
+</html>
